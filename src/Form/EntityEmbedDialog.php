@@ -11,16 +11,20 @@ use Drupal\Core\Ajax\AjaxResponse;
 use Drupal\Core\Ajax\CloseModalDialogCommand;
 use Drupal\Core\Ajax\HtmlCommand;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormBuilderInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\editor\Ajax\EditorDialogSave;
 use Drupal\editor\EditorInterface;
 use Drupal\embed\EmbedButtonInterface;
+use Drupal\entity_browser\Events\Events;
+use Drupal\entity_browser\Events\RegisterJSCallbacks;
 use Drupal\entity_embed\EntityEmbedDisplay\EntityEmbedDisplayManager;
 use Drupal\entity_embed\EntityHelperTrait;
 use Drupal\Component\Serialization\Json;
 use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 
 /**
  * Provides a form to embed entities by specifying data attributes.
@@ -36,16 +40,36 @@ class EntityEmbedDialog extends FormBase {
   protected $formBuilder;
 
   /**
+   * The entity type manager service.
+   *
+   * @var \Drupal\Core\Entity\EntityTypeManagerInterface
+   */
+  protected $entityTypeManager;
+
+  /**
+   * Event dispatcher service.
+   *
+   * @var \Symfony\Component\EventDispatcher\EventDispatcherInterface
+   */
+  protected $eventDispatcher;
+
+  /**
    * Constructs a EntityEmbedDialog object.
    *
    * @param \Drupal\entity_embed\EntityEmbedDisplay\EntityEmbedDisplayManager $plugin_manager
    *   The Module Handler.
    * @param \Drupal\Core\Form\FormBuilderInterface $form_builder
    *   The Form Builder.
+   * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+   *   The entity type manager service.
+   * @param \Symfony\Component\EventDispatcher\EventDispatcherInterface $event_dispatcher
+   *   Event dispatcher service.
    */
-  public function __construct(EntityEmbedDisplayManager $plugin_manager, FormBuilderInterface $form_builder) {
+  public function __construct(EntityEmbedDisplayManager $plugin_manager, FormBuilderInterface $form_builder, EntityTypeManagerInterface $entity_type_manager, EventDispatcherInterface $event_dispatcher) {
     $this->setDisplayPluginManager($plugin_manager);
     $this->formBuilder = $form_builder;
+    $this->entityTypeManager = $entity_type_manager;
+    $this->eventDispatcher = $event_dispatcher;
   }
 
   /**
@@ -54,7 +78,9 @@ class EntityEmbedDialog extends FormBase {
   public static function create(ContainerInterface $container) {
     return new static(
       $container->get('plugin.manager.entity_embed.display'),
-      $container->get('form_builder')
+      $container->get('form_builder'),
+      $container->get('entity_type.manager'),
+      $container->get('event_dispatcher')
     );
   }
 
@@ -151,7 +177,7 @@ class EntityEmbedDialog extends FormBase {
     $label = $this->t('Label');
     // Attempt to display a better label if we can by getting it from
     // the label field definition.
-    $entity_type = $this->entityManager()->getDefinition($entity_element['data-entity-type']);
+    $entity_type = $this->entityTypeManager->getDefinition($entity_element['data-entity-type']);
     if ($entity_type->isSubclassOf('\Drupal\Core\Entity\FieldableEntityInterface') && $entity_type->hasKey('label')) {
       $field_definitions = $this->entityManager()->getBaseFieldDefinitions($entity_type->id());
       if (isset($field_definitions[$entity_type->getKey('label')])) {
@@ -159,16 +185,40 @@ class EntityEmbedDialog extends FormBase {
       }
     }
 
-    $form['attributes']['data-entity-id'] = array(
-      '#type' => 'entity_autocomplete',
-      '#target_type' => $entity_element['data-entity-type'],
-      '#title' => $label,
-      '#default_value' => $entity,
-      '#required' => TRUE,
-      '#description' => $this->t('Type label and pick the right one from suggestions. Note that the unique ID will be saved.'),
-    );
-    if ($bundles = $embed_button->getTypeSetting('bundles')) {
-      $form['attributes']['data-entity-id']['#selection_settings']['target_bundles'] = $bundles;
+    if (($entity_browser_id = $embed_button->getTypePlugin()->getConfigurationValue('entity_browser'))) {
+      /** @var \Drupal\entity_browser\EntityBrowserInterface $entity_browser */
+      $entity_browser = $this->entityTypeManager->getStorage('entity_browser')->load($entity_browser_id);
+      $this->entity_browser = $entity_browser->id();
+      $this->eventDispatcher->addListener(Events::REGISTER_JS_CALLBACKS, [$this, 'registerJSCallback']);
+
+      $form['attributes']['entity_browser']['#theme_wrappers'] = ['container'];
+      $form['attributes']['entity_browser']['browser'] = $entity_browser->getDisplay()->displayEntityBrowser();
+      $form['attributes']['entity_browser']['entity-id'] = [
+        '#type' => 'hidden',
+        '#default_value' => $entity ? $entity->id() : '',
+        '#attributes' => ['class' => ['eb-target']]
+      ];
+      $form['#attached']['library'][] = 'entity_browser/common';
+      $form['#attached']['drupalSettings']['entity_browser'] = [
+        'field_settings' => [$entity_browser->getDisplay()->getUuid() => ['cardinality' => 1]]
+      ];
+      $form['attributes']['data-entity-id'] = array(
+        '#type' => 'value',
+        '#title' => $entity_element['data-entity-id'],
+      );
+    }
+    else {
+      $form['attributes']['data-entity-id'] = array(
+        '#type' => 'entity_autocomplete',
+        '#target_type' => $entity_element['data-entity-type'],
+        '#title' => $label,
+        '#default_value' => $entity,
+        '#required' => TRUE,
+        '#description' => $this->t('Type label and pick the right one from suggestions. Note that the unique ID will be saved.'),
+      );
+      if ($bundles = $embed_button->getTypeSetting('bundles')) {
+        $form['attributes']['data-entity-id']['#selection_settings']['target_bundles'] = $bundles;
+      }
     }
 
     $form['attributes']['data-entity-uuid'] = array(
@@ -365,6 +415,10 @@ class EntityEmbedDialog extends FormBase {
    *   The current state of the form.
    */
   public function validateSelectStep(array $form, FormStateInterface $form_state) {
+    if ($eb_id = $form_state->getValue(['attributes', 'entity_browser', 'entity-id'])) {
+      $form_state->setValue(['attributes', 'data-entity-id'], $eb_id);
+    }
+
     $values = $form_state->getValues();
 
     if ($entity_type = $values['attributes']['data-entity-type']) {
@@ -571,4 +625,15 @@ class EntityEmbedDialog extends FormBase {
     natsort($plugins);
     return $plugins;
   }
+
+  /**
+   * Registers JS callback that gets entities from entity browser and updates
+   * form values accordingly.
+   */
+  public function registerJSCallback(RegisterJSCallbacks $event) {
+    if ($event->getBrowserID() == $this->entity_browser) {
+      $event->registerCallback('Drupal.entityBrowser.selectionCompleted');
+    }
+  }
+
 }

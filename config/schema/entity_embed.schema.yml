@@ -19,3 +19,6 @@ embed.embed_type_settings.entity:
       sequence:
         type: string
         label: 'Display plugin'
+    entity_browser:
+      type: string
+      label: 'Entity browser'
