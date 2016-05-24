@@ -183,6 +183,7 @@ class EntityEmbedDialog extends FormBase {
    *   The form structure.
    */
   public function buildSelectStep(array &$form, FormStateInterface $form_state) {
+    // Entity element is calculated on every AJAX request/submit. See ::buildForm().
     $entity_element = $form_state->get('entity_element');
     /** @var \Drupal\embed\EmbedButtonInterface $embed_button */
     $embed_button = $form_state->get('embed_button');
@@ -337,6 +338,7 @@ class EntityEmbedDialog extends FormBase {
    *   The form structure.
    */
   public function buildEmbedStep(array $form, FormStateInterface $form_state) {
+    // Entity element is calculated on every AJAX request/submit. See ::buildForm().
     $entity_element = $form_state->get('entity_element');
     /** @var \Drupal\embed\EmbedButtonInterface $embed_button */
     $embed_button = $form_state->get('embed_button');
