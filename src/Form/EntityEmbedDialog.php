@@ -210,26 +210,22 @@ class EntityEmbedDialog extends FormBase {
     if ($this->entityBrowser) {
       $this->eventDispatcher->addListener(Events::REGISTER_JS_CALLBACKS, [$this, 'registerJSCallback']);
 
-      $form['attributes']['entity_browser']['#theme_wrappers'] = ['container'];
-      $form['attributes']['entity_browser']['browser'] = $this->entityBrowser->getDisplay()->displayEntityBrowser($form_state);
-      $form['attributes']['entity_browser']['entity-id'] = [
+      $form['entity_browser']['#theme_wrappers'] = ['container'];
+      $form['entity_browser']['browser'] = $this->entityBrowser->getDisplay()->displayEntityBrowser($form_state);
+      $form['entity_browser']['entity_id'] = [
         '#type' => 'hidden',
         '#default_value' => $entity ? $entity->id() : '',
         '#attributes' => ['class' => ['eb-target']]
       ];
-      $form['#attached']['library'][] = 'entity_browser/common';
-      $form['#attached']['drupalSettings']['entity_browser'] = [
+      $form['library'][] = 'entity_browser/common';
+      $form['drupalSettings']['entity_browser'] = [
         $this->entityBrowser->getDisplay()->getUuid() => [
           'cardinality' => 1
         ]
       ];
-      $form['attributes']['data-entity-id'] = array(
-        '#type' => 'value',
-        '#title' => $entity ? $entity->id() : '',
-      );
     }
     else {
-      $form['attributes']['data-entity-id'] = array(
+      $form['entity_id'] = array(
         '#type' => 'entity_autocomplete',
         '#target_type' => $entity_element['data-entity-type'],
         '#title' => $label,
@@ -238,7 +234,7 @@ class EntityEmbedDialog extends FormBase {
         '#description' => $this->t('Type label and pick the right one from suggestions. Note that the unique ID will be saved.'),
       );
       if ($bundles = $embed_button->getTypeSetting('bundles')) {
-        $form['attributes']['data-entity-id']['#selection_settings']['target_bundles'] = $bundles;
+        $form['entity_id']['#selection_settings']['target_bundles'] = $bundles;
       }
     }
 
@@ -504,40 +500,42 @@ class EntityEmbedDialog extends FormBase {
    *   The current state of the form.
    */
   public function validateSelectStep(array $form, FormStateInterface $form_state) {
-    if ($eb_id = $form_state->getValue(['attributes', 'entity_browser', 'entity-id'])) {
-      $form_state->setValue(['attributes', 'data-entity-id'], $eb_id);
+    if ($form_state->hasValue(['entity_browser', 'entity_id'])) {
+      $id = trim($form_state->getValue(['entity_browser', 'entity_id']));
+      $element = $form['entity_browser']['entity_id'];
+    }
+    else {
+      $id = trim($form_state->getValue(['entity_id']));
+      $element = $form['entity_id'];
     }
 
-    $values = $form_state->getValues();
-
-    $entity_type = $values['attributes']['data-entity-type'];
-    $id = trim($values['attributes']['data-entity-id']);
+    $entity_type = $form_state->getValue(['attributes', 'data-entity-type']);
     if ($entity = $this->loadEntity($entity_type, $id)) {
       if (!$entity->access('view')) {
-        $form_state->setError($form['attributes']['data-entity-id'], $this->t('Unable to access @type entity @id.', array('@type' => $entity_type, '@id' => $id)));
+        $form_state->setError($element, $this->t('Unable to access @type entity @id.', array('@type' => $entity_type, '@id' => $id)));
       }
       else {
         if ($uuid = $entity->uuid()) {
           $form_state->setValueForElement($form['attributes']['data-entity-uuid'], $uuid);
         }
         else {
-          $form_state->setError($form['attributes']['data-entity-id'], $this->t('Cannot embed @type entity @id because it does not have a UUID.', array('@type' => $entity_type, '@id' => $id)));
+          $form_state->setError($element, $this->t('Cannot embed @type entity @id because it does not have a UUID.', array('@type' => $entity_type, '@id' => $id)));
         }
 
         // Ensure that at least one Entity Embed Display plugin is present
         // before proceeding to the next step. Raise an error otherwise.
         $embed_button = $form_state->get('embed_button');
         $display_plugin_options = $this->getDisplayPluginOptions($embed_button, $entity);
-        // If no plugin is available after taking the intersection,
-        // raise error. Also log an exception.
+        // If no plugin is available after taking the intersection, raise error.
+        // Also log an exception.
         if (empty($display_plugin_options)) {
-          $form_state->setError($form['attributes']['data-entity-id'], $this->t('No display options available for the selected entity. Please select another entity.'));
+          $form_state->setError($element, $this->t('No display options available for the selected entity. Please select another entity.'));
           $this->logger('entity_embed')->warning('No display options available for "@type:" entity "@id" while embedding using button "@button". Please ensure that at least one Entity Embed Display plugin is allowed for this embed button which is available for this entity.', array('@type' => $entity_type, '@id' => $entity->id(), '@button' => $embed_button->id()));
         }
       }
     }
     else {
-      $form_state->setError($form['attributes']['data-entity-id'], $this->t('Unable to load @type entity @id.', array('@type' => $entity_type, '@id' => $id)));
+      $form_state->setError($element, $this->t('Unable to load @type entity @id.', array('@type' => $entity_type, '@id' => $id)));
     }
   }
 
