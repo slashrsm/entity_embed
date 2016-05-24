@@ -225,7 +225,7 @@ class EntityEmbedDialog extends FormBase {
       ];
       $form['attributes']['data-entity-id'] = array(
         '#type' => 'value',
-        '#title' => $entity_element['data-entity-id'],
+        '#title' => $entity ? $entity->id() : '',
       );
     }
     else {
